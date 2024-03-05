@@ -117,6 +117,7 @@ const asyncPool = async (poolLimit, array, iteratorFn) => {
     //消除空XML tags、两端空白符和多余的\n
     content = content.replace(/<regex( +order *= *\d)?>.*?<\/regex>/gm, '')
         .replace(/(\r\n|\r|\\n)/gm, '\n')
+        .replace(/\\\n/gm, '\\n')
         .replace(/\s*<\|curtail\|>\s*/g, '\n')
         .replace(/\n<\/(card|hidden|META)>\s+?<\1>\n/g, '\n')
         .replace(/\n<(\/?card|example|hidden|plot|META)>\s+?<\1>/g, '\n<$1>')
@@ -677,7 +678,7 @@ const updateParams = res => {
                         };
                     })(messages, type);
 /******************************** */
-                    const messagesAPI = /<\|messagesAPI\|>/.test(prompt);
+                    const messagesAPI = /<\|messagesAPI\|>/.test(prompt), messagesLog = /<\|messagesLog\|>/.test(prompt);
                     apiKey && messagesAPI && (type = 'msg_api');
                     prompt = Config.Settings.xmlPlot ? xmlPlot(prompt, !/claude-(2\.[1-9]|[3-9])/.test(model)) : apiKey ? `\n\nHuman: ${genericFixes(prompt)}\n\nAssistant:` : genericFixes(prompt).trim();
                     if (Config.Settings.FullColon) if (/claude-(2\.(1-|[2-9])|[3-9])/.test(model)) {
@@ -695,13 +696,16 @@ const updateParams = res => {
                             let messages, system;
                             if (messagesAPI) {
                                 const rounds = prompt.replace(/\n\nAssistant: *$/, '').split('\n\nHuman:');
-                                messages = (Config.Settings.FullColon ? rounds.slice(1).reduce((acc, current) => {
-                                    acc.push(current);
-                                    return acc.length > 1 && !acc[acc.length - 2].includes('\n\nAssistant:') ? acc.slice(0, -2).concat(acc.slice(-2).join('\n\r\nHuman:')) : acc;
-                                }, []) : rounds.slice(1)).flatMap(round => {
-                                    const turns = Config.Settings.FullColon ? round.replace(/(?<=\n\nAssistant:.*?)\n(\nAssistant:)/g, '\n\r$1').split('\n\nAssistant:') : round.split('\n\nAssistant:');
-                                    return [{role: 'user', content: turns[0].trim()}].concat(turns.slice(1).flatMap(turn => [{role: 'assistant', content: turn.trim()}]))
-                                }), system = rounds[0].trim();
+                                messages = rounds.slice(1).flatMap(round => {
+                                    const turns = round.split('\n\nAssistant:');
+                                    return [{role: 'user', content: turns[0].trim().replace(/^$/,' ')}].concat(turns.slice(1).flatMap(turn => [{role: 'assistant', content: turn.trim().replace(/^$/,' ')}]))
+                                }).reduce((acc, current) => {
+                                    if (Config.Settings.FullColon && acc[acc.length - 1]?.role === current.role) {
+                                        acc[acc.length - 1].content += (current.role === 'user' ? '\n\r\nHuman:' : '\n\r\nAssistant:') + current.content;
+                                    } else acc.push(current);
+                                    return acc;
+                                }, []), system = rounds[0].trim();
+                                messagesLog && console.log([{role: 'system', content: system}].concat(messages));
                             }
                             const res = await fetch(`${(Config.api_rProxy || 'https://api.anthropic.com').replace(/\/v1 *$/,'')}/v1/${messagesAPI ? 'messages' : 'complete'}`, {
                                 method: 'POST',
